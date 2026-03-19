@@ -35,7 +35,17 @@
     }
 
     function logPerfSummary(extra) {
+        const navigationEntry = performance.getEntriesByType("navigation")[0];
+        const navigation = navigationEntry ? {
+            ttfbMs: perfDuration(navigationEntry.requestStart, navigationEntry.responseStart),
+            htmlDownloadMs: perfDuration(navigationEntry.responseStart, navigationEntry.responseEnd),
+            domContentLoadedMs: Math.round(navigationEntry.domContentLoadedEventEnd * 10) / 10,
+            loadEventMs: Math.round(navigationEntry.loadEventEnd * 10) / 10,
+            totalNavigationMs: Math.round(navigationEntry.duration * 10) / 10
+        } : null;
+
         debugLog("timing summary", {
+            navigation,
             yandexApiMs: perfDuration(perfMarks.yandexLoadStart, perfMarks.yandexReadyEnd),
             csvFetchMs: perfDuration(perfMarks.csvFetchStart, perfMarks.csvFetchEnd),
             firstRenderMs: perfDuration(perfMarks.firstRenderStart, perfMarks.firstRenderEnd),
@@ -351,37 +361,15 @@
 
             try {
                 fetched = toResultEnvelope(normalizeParsedResult(parseCsv(await fetchCsv(googleUrl))), "fetched");
-                debugLog("google fetched", {
-                    records: fetched.records.length,
-                    fetchedTs: formatTs(fetched.maxUpdatedTs),
-                    signature: fetched.signature.slice(0, 80)
-                });
             } catch (error) {
                 console.warn("Google Sheets fetch failed, using cached or fallback CSV.", error);
             }
 
             const cachedEnvelope = cached ? toResultEnvelope(cached, "cached") : null;
-            if (cachedEnvelope) {
-                debugLog("cache loaded", {
-                    records: cachedEnvelope.records.length,
-                    cachedTs: formatTs(cachedEnvelope.maxUpdatedTs),
-                    signature: cachedEnvelope.signature.slice(0, 80)
-                });
-            }
-
             const chosen = chooseLatestData(fetched, cachedEnvelope);
-            debugLog("choose latest", {
-                chosen: chosen ? chosen.source : null,
-                fetchedTs: formatTs(fetched ? fetched.maxUpdatedTs : null),
-                cachedTs: formatTs(cachedEnvelope ? cachedEnvelope.maxUpdatedTs : null)
-            });
 
             if (chosen === fetched && fetched) {
                 writeCachedRecords(fetched);
-                debugLog("cache updated", {
-                    records: fetched.records.length,
-                    maxUpdatedTs: formatTs(fetched.maxUpdatedTs)
-                });
             }
             if (chosen && chosen.records.length) {
                 return chosen;
@@ -389,11 +377,6 @@
         }
 
         const fallback = toResultEnvelope(normalizeParsedResult(parseCsv(await fetchCsv(fallbackUrl))), "fallback");
-        debugLog("fallback loaded", {
-            records: fallback.records.length,
-            fallbackTs: formatTs(fallback.maxUpdatedTs),
-            signature: fallback.signature.slice(0, 80)
-        });
         return fallback;
     }
 
@@ -543,36 +526,18 @@
 
         window.setInterval(async () => {
             try {
-                debugLog("poll started", {
-                    displayedTs: formatTs(appState.currentData ? appState.currentData.maxUpdatedTs : null),
-                    displayedSignature: appState.currentData ? appState.currentData.signature.slice(0, 80) : null
-                });
-
                 const nextData = await loadRecords();
-                debugLog("poll received", {
-                    source: nextData.source,
-                    records: nextData.records.length,
-                    nextTs: formatTs(nextData.maxUpdatedTs),
-                    nextSignature: nextData.signature.slice(0, 80)
-                });
 
                 if (!nextData.records.length) {
-                    debugLog("poll skipped: no records");
                     return;
                 }
 
                 if (!shouldApplyUpdate(appState.currentData, nextData)) {
-                    debugLog("poll skipped: displayed data is already current");
                     return;
                 }
 
                 renderObjects(appState.map, appState.ymaps, nextData.records, false);
                 appState.currentData = nextData;
-                debugLog("poll applied update", {
-                    source: nextData.source,
-                    records: nextData.records.length,
-                    appliedTs: formatTs(nextData.maxUpdatedTs)
-                });
             } catch (error) {
                 console.error(`${debugPrefix} poll failed`, error);
             }
@@ -603,11 +568,12 @@
                 source: initialData.source,
                 records: initialData.records.length,
                 displayedTs: formatTs(initialData.maxUpdatedTs),
-                displayedSignature: initialData.signature.slice(0, 80)
+                chosenSource: initialData.source
             });
             logPerfSummary({
                 source: initialData.source,
-                records: initialData.records.length
+                records: initialData.records.length,
+                displayedTs: formatTs(initialData.maxUpdatedTs)
             });
 
             startAutoRefresh(appState);
